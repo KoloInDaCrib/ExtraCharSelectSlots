@@ -1,0 +1,19 @@
+{
+  "title": "Extra CharSelect Slots",
+  "description": "A Mod that adds additional slots to Character Select State.",
+  "contributors": [
+    {
+      "name": "KoloInDaCrib",
+      "role": "Programmer",
+      "url": "https://x.com/KoloInDaCrib"
+    },
+    {
+      "name": "YasFunny",
+      "role": "Artist",
+      "url": "https://x.com/yasfunny63"
+    }
+  ],
+  "api_version": "0.8.0",
+  "mod_version": "1.2.1",
+  "license": "Apache-2.0"
+}

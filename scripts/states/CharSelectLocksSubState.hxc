@@ -1,0 +1,344 @@
+package extraslots;
+
+import flixel.math.FlxMath;
+import flixel.tweens.FlxEase;
+import flixel.tweens.FlxTween;
+import flixel.FlxG;
+import funkin.data.freeplay.player.PlayerRegistry;
+import funkin.modding.module.ModuleHandler;
+import funkin.modding.events.CharacterSelectScriptEvent;
+import funkin.ui.MusicBeatSubState;
+import funkin.util.tools.StringTools as FunkinStringTools;
+import funkin.util.Constants;
+import funkin.util.MathUtil;
+import funkin.util.HapticUtil;
+import funkin.util.TouchUtil;
+import funkin.util.SwipeUtil;
+import funkin.Conductor;
+import Reflect;
+
+class CharSelectLocksSubState extends MusicBeatSubState
+{
+    var SLOTS_PER_PAGE:Int = 9;
+    var SLOTS_PER_ROW:Int = Std.int(SLOTS_PER_PAGE / 3);
+
+    var SLOT_LERP_VALUE:Float = 0.1;
+
+    var keysHeldArray:Array<String> = [];
+
+    public function new()
+    {
+        super();
+    }
+
+    public function create()
+    {
+        super.create();
+        
+        var state:CharSelectSubState = this._parentState;
+
+        state.persistentUpdate = false;
+
+        // Set the state cursor position to match the remembered character.
+        if (state.rememberedChar == null) return;
+
+        for (key => char in state.availableChars)
+        {
+            if (char == state.rememberedChar)
+            {
+                state.setCursorPosition((key % SLOTS_PER_PAGE), true);
+                state.curChar = char;
+
+                setupPlayerChill(char);
+
+                state.cursorX = (key % SLOTS_PER_ROW) - 1;
+                state.cursorY = Math.floor(key / SLOTS_PER_ROW) - 1;
+
+                break;
+            }
+        }
+
+        // Cancel the tweens to prevent slot misplacement.
+        for (index => member in state.grpIcons.members)
+        {
+            FlxTween.globalManager.cancelTweensOf(member);
+        }
+
+        state.updateIconPositions();
+    }
+
+    function setupPlayerChill(char:String)
+    {
+        var state:CharSelectSubState = this._parentState;
+
+        state.gfChill.switchGF(char);
+
+        state.playerChillOut.switchChar(char, false);
+        state.playerChillOut.visible = false;
+
+        state.playerChill.switchChar(char, false);
+    }
+
+    public function update(elapsed:Float)
+    {
+        super.update(elapsed);
+
+        var state:CharSelectSubState = this._parentState;
+
+        // Update parent assets.
+        for (memb in state.members)
+        {
+            if (memb != null && memb.exists && memb.active)
+			{
+				memb.update(elapsed);
+			}
+        }
+
+        // Update callback override.
+        Conductor.instance.update();
+
+        state.mobileAccept = false;
+
+        // Update input.
+        if (state.allowInput && !state.pressedSelect && state.autoFollow)
+        {
+            if (FlxG.onMobile)
+            {
+                if (TouchUtil.pressed || TouchUtil.justReleased)
+                {
+                    for (i => hitbox in state.grpHitboxes.members)
+                    {
+                        if (hitbox == null || !TouchUtil.overlaps(hitbox)) continue;
+
+                        var curPage:Int = Math.floor((state.cursorY + 1) / SLOTS_PER_ROW);
+
+                        if (state.getCurrentSelected() != i + curPage * SLOTS_PER_PAGE)
+                        {
+                            state.cursorX = (i % 3) - 1;
+                            state.cursorY = Math.floor(i / SLOTS_PER_ROW) + curPage * 3 - 1;
+                            state.cursors.resetDeny();
+                            state.selectSound.play(true);
+                        }
+                        else if (TouchUtil.justPressed && !SwipeUtil.justSwipedAny)
+                        {
+                            state.mobileAccept = true;
+                        }
+
+                        trace("Index: " + i + ", Row: " + state.cursorY + ", Column: " + state.cursorX);
+                        break;
+                    }
+                }
+
+                if (TouchUtil.pressAction(state.charHitbox, null, false))
+                {
+                    state.mobileAccept = true;
+                }
+
+                // On mobile, use swiping to scroll the page.
+                var maxPages:Int = Math.floor(state.grpIcons.length / SLOTS_PER_PAGE);
+                if (SwipeUtil.justSwipedUp && Math.floor(state.getCurrentSelected() / SLOTS_PER_PAGE) > 0)
+                {
+                    state.cursorY -= (SLOTS_PER_PAGE / SLOTS_PER_ROW);
+                    state.cursors.resetDeny();
+                    state.selectSound.play(true);
+                }
+
+                if (SwipeUtil.justSwipedDown && Math.floor(state.getCurrentSelected() / SLOTS_PER_PAGE) < maxPages - 1)
+                {
+                    state.cursorY += (SLOTS_PER_PAGE / SLOTS_PER_ROW);
+                    state.cursors.resetDeny();
+                    state.selectSound.play(true);
+                }
+            }
+
+            var CONTROLS:Array<String> = ["UP", "DOWN", "LEFT", "RIGHT"];
+            for (ctrl in CONTROLS)
+            {
+                var action:Null<FunkinAction> = Reflect.getProperty(state.controls, "_ui_" + ctrl.toLowerCase());
+                if (action == null) continue;
+
+                var tmrString:String = "holdTmr" + FunkinStringTools.toTitleCase(ctrl);
+
+                if (Reflect.getProperty(state.controls, "UI_" + ctrl) ?? false) Reflect.setProperty(state, tmrString, Reflect.getProperty(state, tmrString) + elapsed);
+                if (Reflect.getProperty(state.controls, "UI_" + ctrl + "_R"))
+                {
+                    Reflect.setProperty(state, tmrString, 0);
+                    keysHeldArray.remove(ctrl);
+                }
+
+                var initSpam:Float = 0.5;
+                if (Reflect.getProperty(state, tmrString) >= initSpam && !keysHeldArray.contains(ctrl))
+                {
+                    keysHeldArray.push(ctrl);
+                }
+
+                if (Reflect.getProperty(state.controls, "UI_" + ctrl + "_P"))
+                {
+                    switch (ctrl)
+                    {
+                        case "UP": state.cursorY -= 1;
+                        case "DOWN": state.cursorY += 1;
+                        case "LEFT": state.cursorX -= 1;
+                        case "RIGHT": state.cursorX += 1;
+                    }
+
+                    state.cursors.resetDeny();
+                    Reflect.setProperty(state, tmrString, 0);
+                    state.selectSound.play(true);
+                }
+
+                state.spamDirections = createDirectionFlagFromBools(keysHeldArray.contains("LEFT"), keysHeldArray.contains("RIGHT"), keysHeldArray.contains("UP"), keysHeldArray.contains("DOWN"));
+            }
+
+            if (state.controls.BACK_P) state.goBack();
+        }
+
+        // This is actually the only reason I have to do this. I hate this.
+        var rowCount:Int = Std.int(state.grpIcons.length / 3);
+
+        state.cursorX = FlxMath.wrap(state.cursorX, -1, 1);
+        state.cursorY = FlxMath.wrap(state.cursorY, -1, rowCount - 2);
+
+        // Update the dj based on the selection.
+        updateSelection();
+
+        // Update slots based on the curSelected.
+        state.updateLockAnims();
+
+        var curSelected:Int = state.getCurrentSelected();        
+        var curPage:Int = Math.floor(curSelected / SLOTS_PER_PAGE);
+        
+        state.grpIcons.y = MathUtil.smoothLerpPrecision(state.grpIcons.y, 120 - curPage * state.grpYSpread * 3, elapsed, SLOT_LERP_VALUE);
+
+        // Update icon visibility and mobile hitboxes based on the current page.
+        for (index => member in state.grpIcons.members)
+        {
+            var memberPage:Int = Math.floor(index / SLOTS_PER_PAGE);
+            member.alpha = MathUtil.smoothLerpPrecision(member.alpha, (memberPage == curPage ? 1 : 0), elapsed, SLOT_LERP_VALUE);
+        }
+
+        var pageRow:Int = ((curSelected % SLOTS_PER_PAGE) % SLOTS_PER_ROW) - 1;
+        var pageColumn:Int = Math.floor((curSelected % SLOTS_PER_PAGE) / SLOTS_PER_ROW) - 1;
+
+        if (state.autoFollow)
+        {
+            state.camFollow.screenCenter();
+            state.camFollow.x += pageRow * 10;
+            state.camFollow.y += pageColumn * 10;
+        }
+
+        // Update cursors.
+        state.cursorLocIntended.x = (state.cursorFactor * pageRow) + (FlxG.width / 2) - state.cursors.main.width / 2;
+        state.cursorLocIntended.y = (state.cursorFactor * pageColumn) + (FlxG.height / 2) - state.cursors.main.height / 2;
+
+        state.cursorLocIntended.x += state.cursorOffsetX;
+        state.cursorLocIntended.y += state.cursorOffsetY;
+
+        state.cursors.lerpToLocation(state.cursorLocIntended);
+    }
+
+    function updateSelection()
+    {
+        var state:CharSelectSubState = this._parentState;
+
+        var currentCharacter:String = state.availableChars[state.getCurrentSelected()] ?? Constants.DEFAULT_CHARACTER;
+        if (state.availableChars.exists(state.getCurrentSelected()) && PlayerRegistry.instance.isCharacterSeen(currentCharacter))
+        {
+            state.curChar = state.availableChars[state.getCurrentSelected()];
+
+            if (state.allowInput && state.pressedSelect && (state.controls.BACK_P || (FlxG.onMobile && state.mobileDeny && TouchUtil.justReleased)))
+            {
+                state.mobileDeny = false;
+                state.cursors.unconfirm();
+
+                state.dispatchEvent(new CharacterSelectScriptEvent("CHARACTER_DESELECTED", state.curChar));
+
+                if (FlxG.onMobile && state.backButton != null)
+                {
+                    state.backButton.enabled = true;
+                }
+
+                FlxTween.globalManager.cancelTweensOf(FlxG.sound.music);
+                FlxTween.tween(FlxG.sound.music, {pitch: 1.0, volume: 1.0}, 1, {ease: FlxEase.quartInOut});
+                state.playerChill.anim.play("deselect");
+                state.gfChill.anim.play("deselect");
+                state.pressedSelect = false;
+                FlxTween.tween(FlxG.sound.music, {pitch: 1.0}, 1,
+                {
+                    ease: FlxEase.quartInOut,
+                    onComplete: (_) -> {
+                        if (state.playerChill.getCurrentAnimation() == "deselect loop start" || state.playerChill.getCurrentAnimation() == "deselect")
+                        {
+                            state.playerChill.anim.play("idle", true);
+                            state.playerChill.anim.curAnim.looped = true;
+                            state.gfChill.anim.play("idle", true);
+                            state.gfChill.anim.curAnim.looped = true;
+                        }
+                    }
+                });
+                state.selectTimer.cancel();
+            }
+
+            if (state.allowInput && !state.pressedSelect && (state.controls.ACCEPT_P || state.mobileAccept))
+            {
+                state.spamDirections = 0x0000;
+                state.mobileDeny = false;
+
+                state.cursors.confirm();
+
+                FlxG.sound.play(Paths.sound('CS_confirm'));
+
+                state.dispatchEvent(new CharacterSelectScriptEvent("CHARACTER_CONFIRMED", state.curChar));
+
+                if (FlxG.onMobile && state.backButton != null)
+                {
+                    state.backButton.enabled = false;
+                }
+
+                FlxTween.tween(FlxG.sound.music, {pitch: 0.1}, 1, {ease: FlxEase.quadInOut});
+                FlxTween.tween(FlxG.sound.music, {volume: 0.0}, 1.5, {ease: FlxEase.quadInOut});
+
+                state.playerChill.anim.play("select");
+                state.gfChill.anim.play("confirm", true);
+                state.gfChill.anim.curAnim.looped = true;
+
+                state.pressedSelect = true;
+                state.selectTimer.start(1.5, (_) -> {
+                    var openModule:Module = ModuleHandler.getModule("OpenCustomCharSelect");
+                    if (openModule != null)
+                    {
+                        FlxTween.tween(openModule._asc.chooseDipshitWalls, {y: openModule._asc.chooseDipshitWalls.y + 200}, 0.8, {ease: FlxEase.backIn});
+                    }
+
+                    state.goToFreeplay();
+                });
+            }
+            else if (FlxG.onMobile && state.pressedSelect && TouchUtil.justReleased) state.mobileDeny = true;
+
+            state.mobileAccept = false;
+        }
+        else
+        {
+            state.curChar = "locked";
+
+            state.gfChill.visible = false;
+
+            if (state.allowInput && (state.controls.ACCEPT_P || state.mobileAccept))
+            {
+                state.playerChill.anim.play("cannot select Label", true);
+                state.lockedSound.play(true);
+                HapticUtil.vibrate(0, 0.2);
+
+                state.cursors.deny();
+            }
+        }
+    }
+
+    function createDirectionFlagFromBools(left:Bool, right:Bool, up:Bool, down:Bool)
+    {
+        return (left  ? 0x0001  : 0x0000)
+			|  (right ? 0x0010 : 0x0000)
+			|  (up    ? 0x0100    : 0x0000)
+			|  (down  ? 0x1000  : 0x0000);
+    }
+}

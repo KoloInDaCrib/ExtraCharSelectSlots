@@ -1,0 +1,140 @@
+package extraslots;
+
+import flixel.tweens.FlxEase;
+import flixel.tweens.FlxTween;
+import flixel.FlxG;
+import flixel.FlxObject;
+import flixel.FlxSprite;
+import funkin.data.freeplay.player.PlayerRegistry;
+import funkin.modding.base.ScriptedMusicBeatSubState;
+import funkin.modding.module.Module;
+import funkin.save.Save;
+import funkin.ui.charSelect.CharSelectSubState;
+import funkin.ui.charSelect.Lock;
+import funkin.ui.PixelatedIcon;
+import funkin.util.Constants;
+
+/**
+ * A module to ensure that the CharSelect menu is opened with a custom SubState, which handles the logic for extra locks.
+ */
+class OpenCustomCharSelect extends Module
+{   
+    var SLOTS_PER_PAGE:Int = 9;
+
+    var chooseDipshitWalls:FlxSprite;
+
+    var shouldOpenSubState:Bool = false; // Is false whenever there's not enough slots to warrant opening the SubState.
+
+    public function new()
+    {
+        super("OpenCustomCharSelect");
+    }
+
+    public function onUpdate(event:UpdateScriptEvent)
+    {
+        super.onUpdate(event);
+
+        if (Std.isOfType(FlxG.state, CharSelectSubState) && FlxG.state.subState == null && FlxG.state._requestedSubState == null && shouldOpenSubState)
+        {
+            FlxG.state.persistentDraw = true;
+            FlxG.state.persistentUpdate = false;
+            FlxG.state.openSubState(ScriptedMusicBeatSubState.init("extraslots.CharSelectLocksSubState"));
+        }
+    }
+
+    public function onStateChangeEnd(event:StateChangeScriptEvent)
+    {
+        super.onStateChangeEnd(event);
+
+        if (!Std.isOfType(FlxG.state, CharSelectSubState)) return;
+        
+        // Create new locks for the characters whose index is 9 or above.
+        shouldOpenSubState = false;
+
+        var maxIndex:Int = SLOTS_PER_PAGE - 1;
+
+        for (key => char in FlxG.state.availableChars)
+        {
+            maxIndex = Math.max(maxIndex, key);
+        }
+
+        var totalSlots:Int = maxIndex + 1;
+        if (totalSlots <= SLOTS_PER_PAGE) return;
+        
+        shouldOpenSubState = true;
+
+        if (totalSlots % SLOTS_PER_PAGE != 0)
+        {
+            // Fill up the row so that the extra locks don't look ugly.
+            totalSlots += (SLOTS_PER_PAGE - totalSlots % SLOTS_PER_PAGE);
+        }
+
+        // Create additional locks for characters.
+        for (i in SLOTS_PER_PAGE...totalSlots)
+        {
+            if (FlxG.state.availableChars.exists(i) && PlayerRegistry.instance.isCharacterSeen(FlxG.state.availableChars.get(i) ?? Constants.DEFAULT_CHARACTER))
+            {
+                var path:String = FlxG.state.availableChars.get(i);
+                var temp:PixelatedIcon = new PixelatedIcon(0, 0);
+                temp.setCharacter(path);
+                temp.setGraphicSize(128, 128);
+                temp.updateHitbox();
+                temp.ID = 0;
+                FlxG.state.grpIcons.add(temp);
+            }
+            else
+            {
+                var playableCharacterId:String = FlxG.state.availableChars.get(i);
+                var isPlayerUnlocked:Bool = PlayerRegistry.instance.fetchEntry(playableCharacterId)?.isUnlocked() ?? false;
+                if (FlxG.state.availableChars.exists(i) && isPlayerUnlocked) FlxG.state.nonLocks.push(i);
+
+                var temp:Lock = new Lock(0, 0, i % SLOTS_PER_PAGE, {
+                    swfMode: true,
+                    uniqueInCache: true
+                });
+
+                temp.ID = 1;
+                FlxG.state.grpIcons.add(temp);
+            }
+        }
+
+        FlxG.state.updateIconPositions();
+
+        for (index => member in FlxG.state.grpIcons.members)
+        {
+            member.y += 300;
+            FlxTween.tween(member, {y: member.y - 300}, 1, {ease: FlxEase.expoOut});
+        }
+    
+        // Rearrange assets to fit the locks.
+        // Order: Backing, walls, grpCursors, cursorAccepted, cursorDenied, grpIcons, chooseDipshit
+        var backingIndex:Int = FlxG.state.members.indexOf(FlxG.state.dipshitBacking);
+        chooseDipshitWalls = new FlxSprite(FlxG.state.cutoutSize + 426, -13);
+        chooseDipshitWalls.loadGraphic(Paths.image('charSelectMod/chooseDipshitWalls'));
+        chooseDipshitWalls.scrollFactor.set();
+        FlxG.state.insert(backingIndex + 1, chooseDipshitWalls);
+
+        FlxG.state.remove(FlxG.state.grpCursors);
+        FlxG.state.remove(FlxG.state.cursorConfirmed);
+        FlxG.state.remove(FlxG.state.cursorDenied);
+        FlxG.state.remove(FlxG.state.grpIcons);
+        FlxG.state.remove(FlxG.state.chooseDipshit);
+
+        FlxG.state.insert(backingIndex + 2, FlxG.state.grpCursors);
+        FlxG.state.insert(backingIndex + 3, FlxG.state.cursorConfirmed);
+        FlxG.state.insert(backingIndex + 4, FlxG.state.cursorDenied);
+        FlxG.state.insert(backingIndex + 5, FlxG.state.grpIcons);
+        FlxG.state.insert(backingIndex + 6, FlxG.state.chooseDipshit);
+
+        // Image replacing isn't very good on phones.
+        FlxG.state.chooseDipshit.loadGraphic(Paths.image('charSelectMod/chooseDipshit'));
+
+        FlxG.state.dipshitBlur.frames = Paths.getSparrowAtlas("charSelectMod/dipshitBlur");
+        FlxG.state.dipshitBlur.animation.addByPrefix('idle', "CHOOSE vertical offset instance 1", 24, true);
+        FlxG.state.dipshitBlur.animation.play("idle");
+
+        FlxG.state.dipshitBacking.frames = Paths.getSparrowAtlas("charSelectMod/dipshitBacking");
+        FlxG.state.dipshitBacking.animation.addByPrefix('idle', "CHOOSE horizontal offset instance 1", 24, true);
+        FlxG.state.dipshitBacking.animation.play("idle");
+    }
+}
